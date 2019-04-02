@@ -179,7 +179,11 @@ Feature: DTO input and output
       },
       "@type": "User",
       "@id": "/users/1",
-      "dummy": "/dummies/1"
+      "dummy": {
+        "@context": "/contexts/Dummy",
+        "@id": "/dummies/1",
+        "@type": "Dummy"
+      }
     }
     """
 

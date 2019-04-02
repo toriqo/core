@@ -139,8 +139,7 @@ class ItemNormalizerTest extends TestCase
             new ReservedAttributeNameConverter(),
             $resourceMetadataFactoryProphecy->reveal(),
             [],
-            [],
-            false
+            []
         );
 
         $normalizer->setSerializer($serializerProphecy->reveal());
@@ -180,8 +179,7 @@ class ItemNormalizerTest extends TestCase
             new ReservedAttributeNameConverter(),
             $resourceMetadataFactory->reveal(),
             [],
-            [],
-            false
+            []
         );
 
         $normalizer->setSerializer(new Serializer([$normalizer]));
@@ -240,8 +238,7 @@ class ItemNormalizerTest extends TestCase
             new ReservedAttributeNameConverter(),
             $resourceMetadataFactory->reveal(),
             [],
-            [],
-            false
+            []
         );
 
         $normalizer->normalize($foo, ItemNormalizer::FORMAT);
@@ -325,8 +322,7 @@ class ItemNormalizerTest extends TestCase
             new ReservedAttributeNameConverter(),
             $resourceMetadataFactory->reveal(),
             [],
-            [],
-            false
+            []
         );
         $normalizer->setSerializer($serializerProphecy->reveal());
 
@@ -378,8 +374,7 @@ class ItemNormalizerTest extends TestCase
             null,
             $this->prophesize(ResourceMetadataFactoryInterface::class)->reveal(),
             [],
-            [],
-            false
+            []
         );
 
         $normalizer->denormalize(
@@ -435,8 +430,7 @@ class ItemNormalizerTest extends TestCase
             new ReservedAttributeNameConverter(),
             $resourceMetadataFactory->reveal(),
             [],
-            [],
-            false
+            []
         );
 
         $normalizer->denormalize(
@@ -493,8 +487,7 @@ class ItemNormalizerTest extends TestCase
             new ReservedAttributeNameConverter(),
             $resourceMetadataFactory->reveal(),
             [],
-            [],
-            false
+            []
         );
 
         $normalizer->denormalize(
@@ -553,8 +546,7 @@ class ItemNormalizerTest extends TestCase
             new ReservedAttributeNameConverter(),
             $resourceMetadataFactory->reveal(),
             [],
-            [],
-            false
+            []
         );
 
         $normalizer->denormalize(
