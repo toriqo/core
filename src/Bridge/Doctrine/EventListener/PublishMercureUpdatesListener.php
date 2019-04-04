@@ -150,6 +150,7 @@ final class PublishMercureUpdatesListener
             $this->deletedEntities[(object) [
                 'id' => $this->iriConverter->getIriFromItem($entity),
                 'iri' => $this->iriConverter->getIriFromItem($entity, UrlGeneratorInterface::ABS_URL),
+                'type' => $this->resourceMetadataFactory->create($this->getObjectClass($entity))->getShortName(),
             ]] = $value;
 
             return;
@@ -168,7 +169,7 @@ final class PublishMercureUpdatesListener
             // This may change in the feature, because it's not JSON Merge Patch compliant,
             // and I'm not a fond of this approach
             $iri = $entity->iri;
-            $data = json_encode(['@id' => $entity->id]);
+            $data = json_encode(['@id' => $entity->id, '@type' => $entity->type]);
         } else {
             $resourceClass = $this->getObjectClass($entity);
             $context = $this->resourceMetadataFactory->create($resourceClass)->getAttribute('normalization_context', []);
