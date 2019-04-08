@@ -152,7 +152,7 @@ final class PublishMercureUpdatesListener
             $this->deletedEntities[(object) [
                 'id' => $this->iriConverter->getIriFromItem($entity),
                 'iri' => $this->iriConverter->getIriFromItem($entity, UrlGeneratorInterface::ABS_URL),
-                'type' => $metadata->getShortName(),
+                'type' => $metadata->getIri() ?? $metadata->getShortName(),
             ]] = $value;
 
             return;
