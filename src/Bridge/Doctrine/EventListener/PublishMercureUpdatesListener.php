@@ -16,10 +16,11 @@ namespace ApiPlatform\Core\Bridge\Doctrine\EventListener;
 use ApiPlatform\Core\Api\IriConverterInterface;
 use ApiPlatform\Core\Api\ResourceClassResolverInterface;
 use ApiPlatform\Core\Api\UrlGeneratorInterface;
+use ApiPlatform\Core\Bridge\Symfony\Messenger\DispatchTrait;
 use ApiPlatform\Core\Exception\InvalidArgumentException;
 use ApiPlatform\Core\Exception\RuntimeException;
 use ApiPlatform\Core\Metadata\Resource\Factory\ResourceMetadataFactoryInterface;
-use ApiPlatform\Core\Util\ClassInfoTrait;
+use ApiPlatform\Core\Util\ResourceClassInfoTrait;
 use Doctrine\ORM\Event\OnFlushEventArgs;
 use Symfony\Component\ExpressionLanguage\ExpressionLanguage;
 use Symfony\Component\Mercure\Update;
@@ -35,13 +36,12 @@ use Symfony\Component\Serializer\SerializerInterface;
  */
 final class PublishMercureUpdatesListener
 {
-    use ClassInfoTrait;
+    use DispatchTrait;
+    use ResourceClassInfoTrait;
 
-    private $resourceClassResolver;
     private $iriConverter;
     private $resourceMetadataFactory;
     private $serializer;
-    private $messageBus;
     private $publisher;
     private $expressionLanguage;
     private $createdEntities;
@@ -49,6 +49,9 @@ final class PublishMercureUpdatesListener
     private $deletedEntities;
     private $formats;
 
+    /**
+     * @param array<string, string[]|string> $formats
+     */
     public function __construct(ResourceClassResolverInterface $resourceClassResolver, IriConverterInterface $iriConverter, ResourceMetadataFactoryInterface $resourceMetadataFactory, SerializerInterface $serializer, array $formats, MessageBusInterface $messageBus = null, callable $publisher = null, ExpressionLanguage $expressionLanguage = null)
     {
         if (null === $messageBus && null === $publisher) {
@@ -120,8 +123,7 @@ final class PublishMercureUpdatesListener
      */
     private function storeEntityToPublish($entity, string $property): void
     {
-        $resourceClass = $this->getObjectClass($entity);
-        if (!$this->resourceClassResolver->isResourceClass($resourceClass)) {
+        if (null === $resourceClass = $this->getResourceClass($entity)) {
             return;
         }
 
@@ -170,7 +172,7 @@ final class PublishMercureUpdatesListener
             // By convention, if the entity has been deleted, we send only its IRI
             // This may change in the feature, because it's not JSON Merge Patch compliant,
             // and I'm not a fond of this approach
-            $iri = $entity->iri;
+            $iri  = $entity->iri;
             $data = json_encode(['@id' => $entity->id, '@type' => $entity->type]);
         } else {
             $resourceClass = $this->getObjectClass($entity);
@@ -181,6 +183,6 @@ final class PublishMercureUpdatesListener
         }
 
         $update = new Update($iri, $data, $targets);
-        $this->messageBus ? $this->messageBus->dispatch($update) : ($this->publisher)($update);
+        $this->messageBus ? $this->dispatch($update) : ($this->publisher)($update);
     }
 }

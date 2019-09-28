@@ -19,6 +19,7 @@ use ApiPlatform\Core\GraphQl\Serializer\ItemNormalizer;
 use ApiPlatform\Core\Metadata\Resource\Factory\ResourceMetadataFactoryInterface;
 use ApiPlatform\Core\Security\ResourceAccessCheckerInterface;
 use ApiPlatform\Core\Util\ClassInfoTrait;
+use ApiPlatform\Core\Util\CloneTrait;
 use GraphQL\Type\Definition\ResolveInfo;
 use Symfony\Component\Serializer\Normalizer\NormalizerInterface;
 
@@ -32,6 +33,7 @@ use Symfony\Component\Serializer\Normalizer\NormalizerInterface;
  */
 final class ItemResolver
 {
+    use CloneTrait;
     use ClassInfoTrait;
     use FieldsToAttributesTrait;
     use ResourceAccessCheckerTrait;
@@ -69,9 +71,13 @@ final class ItemResolver
 
         $resourceClass = $this->getObjectClass($item);
         $resourceMetadata = $this->resourceMetadataFactory->create($resourceClass);
-        $this->canAccess($this->resourceAccessChecker, $resourceMetadata, $resourceClass, $info, $item, 'query');
+        $this->canAccess($this->resourceAccessChecker, $resourceMetadata, $resourceClass, $info, [
+            'object' => $item,
+            'previous_object' => $this->clone($item),
+        ], 'query');
 
         $normalizationContext = $resourceMetadata->getGraphqlAttribute('query', 'normalization_context', [], true);
+        $normalizationContext['resource_class'] = $resourceClass;
 
         return $this->normalizer->normalize($item, ItemNormalizer::FORMAT, $normalizationContext + $baseNormalizationContext);
     }
