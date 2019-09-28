@@ -13,18 +13,19 @@ declare(strict_types=1);
 
 namespace ApiPlatform\Core\GraphQl\Resolver\Factory;
 
-use ApiPlatform\Core\Api\IdentifiersExtractorInterface;
 use ApiPlatform\Core\DataProvider\CollectionDataProviderInterface;
 use ApiPlatform\Core\DataProvider\PaginatorInterface;
 use ApiPlatform\Core\DataProvider\SubresourceDataProviderInterface;
 use ApiPlatform\Core\Exception\ResourceClassNotSupportedException;
 use ApiPlatform\Core\GraphQl\Resolver\FieldsToAttributesTrait;
+use ApiPlatform\Core\GraphQl\Resolver\QueryCollectionResolverInterface;
 use ApiPlatform\Core\GraphQl\Resolver\ResourceAccessCheckerTrait;
 use ApiPlatform\Core\GraphQl\Serializer\ItemNormalizer;
 use ApiPlatform\Core\Metadata\Resource\Factory\ResourceMetadataFactoryInterface;
 use ApiPlatform\Core\Security\ResourceAccessCheckerInterface;
 use GraphQL\Error\Error;
 use GraphQL\Type\Definition\ResolveInfo;
+use Psr\Container\ContainerInterface;
 use Symfony\Component\HttpFoundation\RequestStack;
 use Symfony\Component\Serializer\Normalizer\NormalizerInterface;
 
@@ -43,19 +44,19 @@ final class CollectionResolverFactory implements ResolverFactoryInterface
 
     private $collectionDataProvider;
     private $subresourceDataProvider;
+    private $queryResolverLocator;
     private $normalizer;
-    private $identifiersExtractor;
     private $resourceAccessChecker;
     private $requestStack;
     private $paginationEnabled;
     private $resourceMetadataFactory;
 
-    public function __construct(CollectionDataProviderInterface $collectionDataProvider, SubresourceDataProviderInterface $subresourceDataProvider, NormalizerInterface $normalizer, IdentifiersExtractorInterface $identifiersExtractor, ResourceMetadataFactoryInterface $resourceMetadataFactory, ResourceAccessCheckerInterface $resourceAccessChecker = null, RequestStack $requestStack = null, bool $paginationEnabled = false)
+    public function __construct(CollectionDataProviderInterface $collectionDataProvider, SubresourceDataProviderInterface $subresourceDataProvider, ContainerInterface $queryResolverLocator, NormalizerInterface $normalizer, ResourceMetadataFactoryInterface $resourceMetadataFactory, ResourceAccessCheckerInterface $resourceAccessChecker = null, RequestStack $requestStack = null, bool $paginationEnabled = false)
     {
-        $this->subresourceDataProvider = $subresourceDataProvider;
         $this->collectionDataProvider = $collectionDataProvider;
+        $this->subresourceDataProvider = $subresourceDataProvider;
+        $this->queryResolverLocator = $queryResolverLocator;
         $this->normalizer = $normalizer;
-        $this->identifiersExtractor = $identifiersExtractor;
         $this->resourceAccessChecker = $resourceAccessChecker;
         $this->requestStack = $requestStack;
         $this->paginationEnabled = $paginationEnabled;
@@ -82,12 +83,19 @@ final class CollectionResolverFactory implements ResolverFactoryInterface
             $dataProviderContext['filters'] = $this->getNormalizedFilters($args);
             $dataProviderContext['graphql'] = true;
 
-            if (isset($rootClass, $source[$rootProperty = $info->fieldName], $source[ItemNormalizer::ITEM_KEY])) {
-                $rootResolvedFields = $this->identifiersExtractor->getIdentifiersFromItem(unserialize($source[ItemNormalizer::ITEM_KEY]));
+            if (isset($rootClass, $source[$rootProperty = $info->fieldName], $source[ItemNormalizer::ITEM_IDENTIFIERS_KEY])) {
+                $rootResolvedFields = $source[ItemNormalizer::ITEM_IDENTIFIERS_KEY];
                 $subresource = $this->getSubresource($rootClass, $rootResolvedFields, array_keys($rootResolvedFields), $rootProperty, $resourceClass, true, $dataProviderContext);
                 $collection = $subresource ?? [];
             } else {
                 $collection = $this->collectionDataProvider->getCollection($resourceClass, null, $dataProviderContext);
+            }
+
+            $queryResolverId = $resourceMetadata->getGraphqlAttribute($operationName ?? 'query', 'collection_query');
+            if (null !== $queryResolverId) {
+                /** @var QueryCollectionResolverInterface $queryResolver */
+                $queryResolver = $this->queryResolverLocator->get($queryResolverId);
+                $collection = $queryResolver($collection, ['source' => $source, 'args' => $args, 'info' => $info]);
             }
 
             $this->canAccess($this->resourceAccessChecker, $resourceMetadata, $resourceClass, $info, $collection, $operationName ?? 'query');
@@ -101,7 +109,13 @@ final class CollectionResolverFactory implements ResolverFactoryInterface
                 return $data;
             }
 
+            if (!($collection instanceof PaginatorInterface)) {
+                throw Error::createLocatedError(sprintf('Collection returned by the collection data provider must implement %s', PaginatorInterface::class), $info->fieldNodes, $info->path);
+            }
+
             $offset = 0;
+            $totalItems = $collection->getTotalItems();
+            $nbPageItems = $collection->count();
             if (isset($args['after'])) {
                 $after = base64_decode($args['after'], true);
                 if (false === $after) {
@@ -109,13 +123,25 @@ final class CollectionResolverFactory implements ResolverFactoryInterface
                 }
                 $offset = 1 + (int) $after;
             }
+            if (isset($args['before'])) {
+                $before = base64_decode($args['before'], true);
+                if (false === $before) {
+                    throw Error::createLocatedError(sprintf('Cursor %s is invalid', $args['before']), $info->fieldNodes, $info->path);
+                }
+                $offset = (int) $before - $nbPageItems;
+            }
+            if (isset($args['last']) && !isset($args['before'])) {
+                $offset = $totalItems - $args['last'];
+            }
+            $offset = 0 > $offset ? 0 : $offset;
 
-            $data = ['totalCount' => 0.0, 'edges' => [], 'pageInfo' => ['endCursor' => null, 'hasNextPage' => false]];
+            $data = ['totalCount' => 0., 'edges' => [], 'pageInfo' => ['startCursor' => null, 'endCursor' => null, 'hasNextPage' => false, 'hasPreviousPage' => false]];
             if ($collection instanceof PaginatorInterface && ($totalItems = $collection->getTotalItems()) > 0) {
-                $nbPageItems = $collection->count();
+                $data['totalCount'] = $totalItems;
+                $data['pageInfo']['startCursor'] = base64_encode((string) $offset);
                 $data['pageInfo']['endCursor'] = base64_encode((string) ($offset + $nbPageItems - 1));
                 $data['pageInfo']['hasNextPage'] = $collection->getCurrentPage() !== $collection->getLastPage() && (float) $nbPageItems === $collection->getItemsPerPage();
-                $data['totalCount'] = $totalItems;
+                $data['pageInfo']['hasPreviousPage'] = $collection->getCurrentPage() > 1 && (float) $nbPageItems === $collection->getItemsPerPage();
             }
 
             foreach ($collection as $index => $object) {

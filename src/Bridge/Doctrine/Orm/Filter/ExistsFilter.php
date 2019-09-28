@@ -17,9 +17,14 @@ use ApiPlatform\Core\Bridge\Doctrine\Common\Filter\ExistsFilterInterface;
 use ApiPlatform\Core\Bridge\Doctrine\Common\Filter\ExistsFilterTrait;
 use ApiPlatform\Core\Bridge\Doctrine\Orm\Util\QueryBuilderHelper;
 use ApiPlatform\Core\Bridge\Doctrine\Orm\Util\QueryNameGeneratorInterface;
+use ApiPlatform\Core\Exception\InvalidArgumentException;
+use Doctrine\Common\Persistence\ManagerRegistry;
 use Doctrine\ORM\Mapping\ClassMetadataInfo;
 use Doctrine\ORM\Query\Expr\Join;
 use Doctrine\ORM\QueryBuilder;
+use Psr\Log\LoggerInterface;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\RequestStack;
 
 /**
  * Filters the collection by whether a property value exists or not.
@@ -28,7 +33,7 @@ use Doctrine\ORM\QueryBuilder;
  * the value is not one of ( "true" | "false" | "1" | "0" ) the property is ignored.
  *
  * A query parameter with key but no value is treated as `true`, e.g.:
- * Request: GET /products?brand[exists]
+ * Request: GET /products?exists[brand]
  * Interpretation: filter products which have a brand
  *
  * @author Teoh Han Hui <teohhanhui@gmail.com>
@@ -38,12 +43,74 @@ class ExistsFilter extends AbstractContextAwareFilter implements ExistsFilterInt
     use ExistsFilterTrait;
 
     /**
+     * @param RequestStack|null $requestStack No prefix to prevent autowiring of this deprecated property
+     */
+    public function __construct(ManagerRegistry $managerRegistry, $requestStack = null, LoggerInterface $logger = null, /* string $existsParameterName = self::QUERY_PARAMETER_KEY, array*/ $properties = null)
+    {
+        $existsParameterName = self::QUERY_PARAMETER_KEY;
+
+        if (($funcNumArgs = \func_num_args()) > 3) {
+            $fourthArgument = func_get_arg(3);
+            if (4 <= $funcNumArgs && (null === $fourthArgument || \is_array($fourthArgument))) {
+                @trigger_error(sprintf('Passing the "$properties" argument as 4th argument of "%s" is deprecated since API Platform 2.5 and will not be possible anymore in API Platform 3. Pass the new "$existsParameterName" argument as 4th argument and the old "$properties" argument as 5th argument instead.', __CLASS__), E_USER_DEPRECATED);
+                $properties = $fourthArgument;
+            } elseif (\is_string($fourthArgument)) {
+                $existsParameterName = $fourthArgument;
+            } else {
+                throw new InvalidArgumentException(sprintf('The "$existsParameterName" argument of "%s" is expected to be a string.', __CLASS__));
+            }
+        }
+
+        if ($funcNumArgs > 4) {
+            $fifthArgument = func_get_arg(4);
+            if (null === $fifthArgument || \is_array($fifthArgument)) {
+                $properties = $fifthArgument;
+            } else {
+                throw new InvalidArgumentException(sprintf('The "$properties" argument of "%s" is expected to be an array or null.', __CLASS__));
+            }
+        }
+
+        parent::__construct($managerRegistry, $requestStack, $logger, $properties);
+
+        $this->existsParameterName = $existsParameterName;
+    }
+
+    /**
      * {@inheritdoc}
      */
-    protected function filterProperty(string $property, $value, QueryBuilder $queryBuilder, QueryNameGeneratorInterface $queryNameGenerator, string $resourceClass, string $operationName = null)
+    public function apply(QueryBuilder $queryBuilder, QueryNameGeneratorInterface $queryNameGenerator, string $resourceClass, string $operationName = null, array $context = [])
     {
+        if (!\is_array($context['filters'][$this->existsParameterName] ?? null)) {
+            $context['exists_deprecated_syntax'] = true;
+            parent::apply($queryBuilder, $queryNameGenerator, $resourceClass, $operationName, $context);
+
+            return;
+        }
+
+        foreach ($context['filters'][$this->existsParameterName] as $property => $value) {
+            $this->filterProperty($property, $value, $queryBuilder, $queryNameGenerator, $resourceClass, $operationName, $context);
+        }
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    protected function filterProperty(string $property, $value, QueryBuilder $queryBuilder, QueryNameGeneratorInterface $queryNameGenerator, string $resourceClass, string $operationName = null/*, array $context = []*/)
+    {
+        if (\func_num_args() > 6) {
+            $context = func_get_arg(6);
+        } else {
+            if (__CLASS__ !== \get_class($this)) {
+                $r = new \ReflectionMethod($this, __FUNCTION__);
+                if (__CLASS__ !== $r->getDeclaringClass()->getName()) {
+                    @trigger_error(sprintf('Method %s() will have a seventh `$context` argument in version API Platform 3.0. Not defining it is deprecated since API Platform 2.5.', __FUNCTION__), E_USER_DEPRECATED);
+                }
+            }
+            $context = [];
+        }
+
         if (
-            !isset($value[self::QUERY_PARAMETER_KEY]) ||
+            (($context['exists_deprecated_syntax'] ?? false) && !isset($value[self::QUERY_PARAMETER_KEY])) ||
             !$this->isPropertyEnabled($property, $resourceClass) ||
             !$this->isPropertyMapped($property, $resourceClass, true) ||
             !$this->isNullableField($property, $resourceClass)
@@ -61,7 +128,7 @@ class ExistsFilter extends AbstractContextAwareFilter implements ExistsFilterInt
 
         $associations = [];
         if ($this->isPropertyNested($property, $resourceClass)) {
-            list($alias, $field, $associations) = $this->addJoinsForNestedProperty($property, $alias, $queryBuilder, $queryNameGenerator, $resourceClass);
+            [$alias, $field, $associations] = $this->addJoinsForNestedProperty($property, $alias, $queryBuilder, $queryNameGenerator, $resourceClass);
         }
         $metadata = $this->getNestedMetadata($resourceClass, $associations);
 
@@ -148,5 +215,23 @@ class ExistsFilter extends AbstractContextAwareFilter implements ExistsFilterInt
         }
 
         return true;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    protected function extractProperties(Request $request/*, string $resourceClass*/): array
+    {
+        if (!$request->query->has($this->existsParameterName)) {
+            $resourceClass = \func_num_args() > 1 ? (string) func_get_arg(1) : null;
+
+            return parent::extractProperties($request, $resourceClass);
+        }
+
+        @trigger_error(sprintf('The use of "%s::extractProperties()" is deprecated since 2.2. Use the "filters" key of the context instead.', __CLASS__), E_USER_DEPRECATED);
+
+        $properties = $request->query->get($this->existsParameterName);
+
+        return \is_array($properties) ? $properties : [];
     }
 }

@@ -15,7 +15,9 @@ namespace ApiPlatform\Core\Tests\GraphQl\Type;
 
 use ApiPlatform\Core\Exception\ResourceClassNotFoundException;
 use ApiPlatform\Core\GraphQl\Resolver\Factory\ResolverFactoryInterface;
+use ApiPlatform\Core\GraphQl\Type\Definition\IterableType;
 use ApiPlatform\Core\GraphQl\Type\SchemaBuilder;
+use ApiPlatform\Core\GraphQl\Type\TypesFactoryInterface;
 use ApiPlatform\Core\Metadata\Property\Factory\PropertyMetadataFactoryInterface;
 use ApiPlatform\Core\Metadata\Property\Factory\PropertyNameCollectionFactoryInterface;
 use ApiPlatform\Core\Metadata\Property\PropertyMetadata;
@@ -256,8 +258,10 @@ class SchemaBuilderTest extends TestCase
         $propertyMetadataFactoryProphecy = $this->prophesize(PropertyMetadataFactoryInterface::class);
         $resourceNameCollectionFactoryProphecy = $this->prophesize(ResourceNameCollectionFactoryInterface::class);
         $resourceMetadataFactoryProphecy = $this->prophesize(ResourceMetadataFactoryInterface::class);
+        $itemResolverFactoryProphecy = $this->prophesize(ResolverFactoryInterface::class);
         $collectionResolverFactoryProphecy = $this->prophesize(ResolverFactoryInterface::class);
         $itemMutationResolverFactoryProphecy = $this->prophesize(ResolverFactoryInterface::class);
+        $typesFactoryProphecy = $this->prophesize(TypesFactoryInterface::class);
 
         $resourceClassNames = [];
         for ($i = 1; $i <= 3; ++$i) {
@@ -289,22 +293,26 @@ class SchemaBuilderTest extends TestCase
         $resourceNameCollection = new ResourceNameCollection($resourceClassNames);
         $resourceNameCollectionFactoryProphecy->create()->willReturn($resourceNameCollection);
 
+        $itemResolverFactoryProphecy->__invoke(Argument::cetera())->willReturn(function () {
+        });
         $collectionResolverFactoryProphecy->__invoke(Argument::cetera())->willReturn(function () {
         });
         $itemMutationResolverFactoryProphecy->__invoke(Argument::cetera())->willReturn(function () {
         });
+
+        $typesFactoryProphecy->getTypes()->willReturn(['Iterable' => new IterableType()]);
 
         return new SchemaBuilder(
             $propertyNameCollectionFactoryProphecy->reveal(),
             $propertyMetadataFactoryProphecy->reveal(),
             $resourceNameCollectionFactoryProphecy->reveal(),
             $resourceMetadataFactoryProphecy->reveal(),
+            $itemResolverFactoryProphecy->reveal(),
             $collectionResolverFactoryProphecy->reveal(),
             $itemMutationResolverFactoryProphecy->reveal(),
             function () {
             },
-            function () {
-            },
+            $typesFactoryProphecy->reveal(),
             null,
             $paginationEnabled
         );

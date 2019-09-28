@@ -16,12 +16,10 @@ namespace ApiPlatform\Core\Bridge\Symfony\Bundle\DependencyInjection;
 use ApiPlatform\Core\Api\FilterInterface;
 use ApiPlatform\Core\Bridge\Doctrine\MongoDbOdm\Extension\AggregationCollectionExtensionInterface;
 use ApiPlatform\Core\Bridge\Doctrine\MongoDbOdm\Extension\AggregationItemExtensionInterface;
-use ApiPlatform\Core\Bridge\Doctrine\MongoDbOdm\Filter\AbstractFilter as DoctrineMongoDbOdmAbstractFilter;
 use ApiPlatform\Core\Bridge\Doctrine\Orm\Extension\EagerLoadingExtension;
 use ApiPlatform\Core\Bridge\Doctrine\Orm\Extension\FilterEagerLoadingExtension;
 use ApiPlatform\Core\Bridge\Doctrine\Orm\Extension\QueryCollectionExtensionInterface as DoctrineQueryCollectionExtensionInterface;
 use ApiPlatform\Core\Bridge\Doctrine\Orm\Extension\QueryItemExtensionInterface;
-use ApiPlatform\Core\Bridge\Doctrine\Orm\Filter\AbstractContextAwareFilter as DoctrineOrmAbstractContextAwareFilter;
 use ApiPlatform\Core\Bridge\Elasticsearch\DataProvider\Extension\RequestBodySearchCollectionExtensionInterface;
 use ApiPlatform\Core\DataPersister\DataPersisterInterface;
 use ApiPlatform\Core\DataProvider\CollectionDataProviderInterface;
@@ -29,6 +27,9 @@ use ApiPlatform\Core\DataProvider\ItemDataProviderInterface;
 use ApiPlatform\Core\DataProvider\SubresourceDataProviderInterface;
 use ApiPlatform\Core\DataTransformer\DataTransformerInterface;
 use ApiPlatform\Core\Exception\RuntimeException;
+use ApiPlatform\Core\GraphQl\Resolver\QueryCollectionResolverInterface;
+use ApiPlatform\Core\GraphQl\Resolver\QueryItemResolverInterface;
+use ApiPlatform\Core\GraphQl\Type\Definition\TypeInterface as GraphQlTypeInterface;
 use Doctrine\Common\Annotations\Annotation;
 use Doctrine\ORM\Version;
 use Elasticsearch\Client;
@@ -41,8 +42,6 @@ use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Extension\PrependExtensionInterface;
 use Symfony\Component\DependencyInjection\Loader\XmlFileLoader;
-use Symfony\Component\DependencyInjection\Reference;
-use Symfony\Component\ExpressionLanguage\ExpressionLanguage;
 use Symfony\Component\Finder\Finder;
 use Symfony\Component\HttpKernel\DependencyInjection\Extension;
 use Symfony\Component\Validator\Validator\ValidatorInterface;
@@ -112,6 +111,12 @@ final class ApiPlatformExtension extends Extension implements PrependExtensionIn
             ->addTag('api_platform.subresource_data_provider');
         $container->registerForAutoconfiguration(FilterInterface::class)
             ->addTag('api_platform.filter');
+        $container->registerForAutoconfiguration(QueryItemResolverInterface::class)
+            ->addTag('api_platform.graphql.query_resolver');
+        $container->registerForAutoconfiguration(QueryCollectionResolverInterface::class)
+            ->addTag('api_platform.graphql.query_resolver');
+        $container->registerForAutoconfiguration(GraphQlTypeInterface::class)
+            ->addTag('api_platform.graphql.type');
 
         if (interface_exists(ValidatorInterface::class)) {
             $loader->load('validator.xml');
@@ -119,9 +124,6 @@ final class ApiPlatformExtension extends Extension implements PrependExtensionIn
 
         $bundles = $container->getParameter('kernel.bundles');
         if (isset($bundles['SecurityBundle'])) {
-            if (class_exists(ExpressionLanguage::class)) {
-                $loader->load('security_expression_language.xml');
-            }
             $loader->load('security.xml');
         }
 
@@ -135,11 +137,11 @@ final class ApiPlatformExtension extends Extension implements PrependExtensionIn
         $this->registerOAuthConfiguration($container, $config);
         $this->registerApiKeysConfiguration($container, $config);
         $this->registerSwaggerConfiguration($container, $config, $loader);
-        $this->registerJsonApiConfiguration($formats, $loader);
         $this->registerJsonLdConfiguration($container, $formats, $loader, $config['enable_docs']);
+        $this->registerGraphqlConfiguration($container, $config, $loader);
         $this->registerJsonHalConfiguration($formats, $loader);
         $this->registerJsonProblemConfiguration($errorFormats, $loader);
-        $this->registerGraphQlConfiguration($container, $config, $loader);
+        $this->registerJsonApiConfiguration($formats, $loader);
         $this->registerBundlesConfiguration($bundles, $config, $loader);
         $this->registerCacheConfiguration($container);
         $this->registerDoctrineConfiguration($container, $config, $loader, $useDoctrine);
@@ -172,6 +174,7 @@ final class ApiPlatformExtension extends Extension implements PrependExtensionIn
         $container->setParameter('api_platform.eager_loading.max_joins', $config['eager_loading']['max_joins']);
         $container->setParameter('api_platform.eager_loading.fetch_partial', $config['eager_loading']['fetch_partial']);
         $container->setParameter('api_platform.eager_loading.force_eager', $config['eager_loading']['force_eager']);
+        $container->setParameter('api_platform.collection.exists_parameter_name', $config['collection']['exists_parameter_name']);
         $container->setParameter('api_platform.collection.order', $config['collection']['order']);
         $container->setParameter('api_platform.collection.order_parameter_name', $config['collection']['order_parameter_name']);
         $container->setParameter('api_platform.collection.pagination.enabled', $config['collection']['pagination']['enabled']);
@@ -404,16 +407,13 @@ final class ApiPlatformExtension extends Extension implements PrependExtensionIn
     /**
      * Registers the GraphQL configuration.
      */
-    private function registerGraphQlConfiguration(ContainerBuilder $container, array $config, XmlFileLoader $loader)
+    private function registerGraphqlConfiguration(ContainerBuilder $container, array $config, XmlFileLoader $loader)
     {
-        $enabled = $config['graphql']['enabled'];
-
-        $container->setParameter('api_platform.graphql.enabled', $enabled);
-
-        if (!$enabled) {
+        if (!$config['graphql']) {
             return;
         }
 
+        $container->setParameter('api_platform.graphql.enabled', $config['graphql']['enabled']);
         $container->setParameter('api_platform.graphql.graphiql.enabled', $config['graphql']['graphiql']['enabled']);
 
         $loader->load('graphql.xml');
@@ -442,27 +442,17 @@ final class ApiPlatformExtension extends Extension implements PrependExtensionIn
      */
     private function registerCacheConfiguration(ContainerBuilder $container)
     {
-        if (!$container->hasParameter('kernel.debug') || !$container->getParameter('kernel.debug')) {
-            $container->removeDefinition('api_platform.cache_warmer.cache_pool_clearer');
-        }
-
-        if (!$container->hasParameter('api_platform.metadata_cache')) {
+        // Don't use system cache pool in dev
+        if ($container->hasParameter('api_platform.metadata_cache') ? $container->getParameter('api_platform.metadata_cache') : !$container->getParameter('kernel.debug')) {
             return;
         }
 
-        @trigger_error('The "api_platform.metadata_cache" parameter is deprecated since version 2.4 and will have no effect in 3.0.', E_USER_DEPRECATED);
-
-        // BC
-        if (!$container->getParameter('api_platform.metadata_cache')) {
-            $container->removeDefinition('api_platform.cache_warmer.cache_pool_clearer');
-
-            $container->register('api_platform.cache.metadata.property', ArrayAdapter::class);
-            $container->register('api_platform.cache.metadata.resource', ArrayAdapter::class);
-            $container->register('api_platform.cache.route_name_resolver', ArrayAdapter::class);
-            $container->register('api_platform.cache.identifiers_extractor', ArrayAdapter::class);
-            $container->register('api_platform.cache.subresource_operation_factory', ArrayAdapter::class);
-            $container->register('api_platform.elasticsearch.cache.metadata.document', ArrayAdapter::class);
-        }
+        $container->register('api_platform.cache.metadata.property', ArrayAdapter::class);
+        $container->register('api_platform.cache.metadata.resource', ArrayAdapter::class);
+        $container->register('api_platform.cache.route_name_resolver', ArrayAdapter::class);
+        $container->register('api_platform.cache.identifiers_extractor', ArrayAdapter::class);
+        $container->register('api_platform.cache.subresource_operation_factory', ArrayAdapter::class);
+        $container->register('api_platform.elasticsearch.cache.metadata.document', ArrayAdapter::class);
     }
 
     /**
@@ -478,8 +468,6 @@ final class ApiPlatformExtension extends Extension implements PrependExtensionIn
             ->addTag('api_platform.doctrine.orm.query_extension.item');
         $container->registerForAutoconfiguration(DoctrineQueryCollectionExtensionInterface::class)
             ->addTag('api_platform.doctrine.orm.query_extension.collection');
-        $container->registerForAutoconfiguration(DoctrineOrmAbstractContextAwareFilter::class)
-            ->setBindings(['$requestStack' => null]);
 
         $loader->load('doctrine_orm.xml');
 
@@ -506,8 +494,6 @@ final class ApiPlatformExtension extends Extension implements PrependExtensionIn
             ->addTag('api_platform.doctrine.mongodb.aggregation_extension.item');
         $container->registerForAutoconfiguration(AggregationCollectionExtensionInterface::class)
             ->addTag('api_platform.doctrine.mongodb.aggregation_extension.collection');
-        $container->registerForAutoconfiguration(DoctrineMongoDbOdmAbstractFilter::class)
-            ->setBindings(['$managerRegistry' => new Reference('doctrine_mongodb')]);
 
         $loader->load('doctrine_mongodb_odm.xml');
     }

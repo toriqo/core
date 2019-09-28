@@ -1,17 +1,8 @@
 # Changelog
 
-## 2.4.2
+## 2.5.0 beta 1
 
-* Fix a dependency injection injection problem in `FilterEagerLoadingExtension`
-* Improve performance by adding a `NoOpScalarNormalizer` handling scalar values
-
-## 2.4.1
-
-* Improve performance of the dev environment and deprecate the `api_platform.metadata_cache` parameter
-* Fix a BC break in `SearchFilter`
-* Don't send HTTP cache headers for unsuccessful responses
-* GraphQL: parse input and messenger metadata on the GraphQl operation
-* GraphQL: do not enable graphql when `webonyx/graphql-php` is not installed
+* GraphQL: Add support for custom types
 
 ## 2.4.0
 
@@ -105,7 +96,7 @@
 * Allow to set the HTTP status code to send to the client through the `status` attribute
 * Add support for the `Sunset` HTTP header using the `sunset` attribute
 * Set the `Content-Location` and `Location` headers when appropriate for better RFC7231 conformance
-* Display the matching data provider and data persiter in the debug panel
+* Display the matching data provider and data persister in the debug panel
 * GraphQL: improve performance by lazy loading types
 * Add the `api_persist` request attribute to enable or disable the `WriteListener`
 * Allow to set a default context in all normalizers

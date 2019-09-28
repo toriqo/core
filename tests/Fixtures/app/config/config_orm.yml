@@ -45,7 +45,7 @@ services:
 
     app.my_dummy_resource.exists_filter:
         parent:    'api_platform.doctrine.orm.exists_filter'
-        arguments: [ { 'description': ~, 'relatedDummy.name': ~, 'dummyBoolean': ~, 'relatedDummy': ~ } ]
+        arguments: [ { 'alias': ~, 'description': ~, 'relatedDummy.name': ~, 'dummyBoolean': ~, 'relatedDummy': ~ } ]
         tags:      [ { name: 'api_platform.filter', id: 'my_dummy.exists' } ]
 
     app.related_dummy_resource.search_filter:
@@ -71,3 +71,9 @@ services:
         public: false
         tags:
             -  { name: 'api_platform.data_persister' }
+
+    app.graphql.query_resolver.dummy_custom_not_retrieved_item:
+        class: 'ApiPlatform\Core\Tests\Fixtures\TestBundle\Resolver\DummyCustomQueryNotRetrievedItemResolver'
+        public: false
+        tags:
+            - { name: 'api_platform.graphql.query_resolver' }
